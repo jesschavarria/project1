@@ -1,0 +1,343 @@
+---
+title: 'Project 1: Wrangling, Exploration, Visualization'
+author: "SDS322E"
+date: ''
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+## Data Wrangling, Exploration, Visualization
+
+### Jessica Chavarria, jc86585
+
+#### Introduction 
+
+For this particular project, I wanted to do something that aligned with my personal interests and instantly thought of looking for data sets on anime shows. "Anime" defines a specific style of animated media (TV shows, movies, etc) originating from Japan. I've watched a variety of shows over the years since discovering anime in middle school, so I thought it would be neat to analyze descriptive information about them and see where the shows I love stand in terms of ratings or popularity. I ended up finding two data sets on Kaggle that would help me accomplish this. Both data sets include information from the MyAnimeList website, which is a social networking space for fans of anime to share their opinions on the shows they watch. Users add an anime they've seen to their personal list and give it a rating from 1-10, with scores closer to 10 reflecting a more positive opinion on the series. The ratings themselves don't seem to have a universal Likert scale for evaluating, so the meaning of the rating depends primarily on the user themselves. This gives users the wiggle room to be as stringent as they want (or don't want to be) with ratings.
+
+The first data set, anime.csv, contains information about every anime title available on the website. The information includes each show's MyAnimeList ID ("MAL_ID"), the official title, the average score across all user ratings ("Score"), genres, the show's English and Japanese titles, type of medium (e.g. TV, movie, special), number of episodes, time frame in which it aired, the season the show premiered in, the producers, licencors and animation studios credited, the nature of the source material (e.g. original, manga/comic), content ratings, and more. The second dataset, animelist.csv, contains user-specific information where each user was assigned a random ID number ("user_id"). All the anime titles a user has in their list appear as separate observations ("anime_id"), along with the rating the user assigned to that particular title ("rating"), whether or not they've completed the whole series ("watching_status"), and the amount of episodes they've watched ("watched_episodes"). The watching status works according to this key:
+
+1 = Currently watching
+2 = Completed
+3 = On-hold/paused
+4 = Dropped
+6 = Plan to watch
+
+Below I read in both data sets and do a bit of wrangling in preparation for joining these data sets effectively.
+
+
+```{R}
+library(tidyverse)
+library(kableExtra)
+anime <- read_csv("datasets/anime.csv")
+userlist <- read_csv("datasets/animelist.csv")
+```
+
+Due to the incredibly large amount of observations in the "userlist" data set (over 109,200,000+!), I had to cut down to the first 100,000 rows only for my code to run. The resulting data set was saved into a new object called "sample_userlist", which allows me analyze about 309 total unique user IDs.
+
+```{R}
+##pulling first 100,000 rows of userlist to avoid RStudio crashing on me
+sample_userlist <- userlist %>% slice(1:100000)
+```
+
+Lastly, before doing any tidying or joining, I wanted to clean up the anime data set a bit by keeping only the variables I was interested in analyzing and deleting the rest.
+
+```{R}
+##deleting variables/columns in anime.csv I'm not interested in
+animetitles <- anime %>% select(c(MAL_ID, Name, Score, Genres, Type, 
+                                  Episodes, Premiered, Studios, Source, 
+                                  Rating, Ranked, Popularity, Members, 
+                                  Favorites, Watching, Completed, `On-Hold`, 
+                                  `Dropped`, `Plan to Watch`, `Score-10`, 
+                                  `Score-9`, `Score-8`, `Score-7`, 
+                                  `Score-6`, `Score-5`, `Score-4`, 
+                                  `Score-3`, `Score-2`, `Score-1`))
+
+```
+
+#### Tidying: Reshaping
+
+The "animetitles" dataset is currently untidy as it contains the total counts for watch status and each separate 1-10 rating in separate columns. To make this data tidy, I'm using the pivot_longer function. I started by making each title-rating combination its own row and renaming the value column to "global_ratcount" and the Score column to "global_meanscore" to help distinguish these values from the user-assigned ratings later. Likewise, the watch statuses-title combination each have a unique observation, and the name column was renamed to "global_watchstatus" while the value column was renamed to "global_watchcount". The "sample_userlist" data set with the user's ratings was already provided in the tidy format. To demonstrate my skills with pivot_wider as well, I converted the tidy format to untidy, then had the data set go back to its original state.
+
+```{R}
+animetidy <- animetitles %>% 
+  pivot_longer(c("Score-10":"Score-1")) %>% 
+  separate(name, into=c("word","rating"), sep="-") %>% 
+  rename(global_nscore = value, global_meanscore = Score) %>% 
+  select(-word) %>% 
+  pivot_longer(c("Watching":"Plan to Watch")) %>% 
+  rename(global_watchstatus = name, global_nwatch = value)
+glimpse(animetidy)
+```
+
+```{R}
+##turning already-tidy users dataset to untidy
+userswide <- sample_userlist %>% 
+  pivot_wider(names_from="user_id", 
+              values_from=c(rating, watching_status, watched_episodes))
+head(userswide)
+
+##reshaping users back to tidy
+userslong <- userswide %>% 
+  pivot_longer(c("rating_0":"watched_episodes_340")) %>% 
+  separate(name, into=c("category","user_id"), sep="_(?=[0-9])") %>% 
+  pivot_wider(names_from="category", values_from="value") %>% 
+  na.omit()
+glimpse(userslong)
+```
+
+    
+#### Joining/Merging
+
+I decided to utilize left_join on the user ratings dataset since my goal was to match the full anime titles (and their relevant information) to each anime ID number reviewed in the user dataset. The only observations that I noticed were initially dropped in the joined data set were all the anime titles which were unique to the "animetidy" data set only. The only problem this presents is I won't be able to accurately measure descriptive statistics across all titles available in MyAnimeList using the joined data set alone. I also took the liberty of removing all anime titles rated "Rx - Hentai" to keep the data set more safe-for-work (Hentai is basically the anime equivalent to porn). This resulted in 112,550 rows being removed. Additionally, I removed all rows where the user-assigned rating was 0. This is because in the original userlist dataset, a 0 was assigned for rating if the user had an anime included in their list but haven't yet assigned it a score. This resulted in 2,287,450 rows getting removed.
+
+The full dataset was saved as a new variable, animereviews, with 2,600,000 rows and 22 columns in total. The joined data set and each separate original data set are each 0 B in size (according to my current Environment pane).
+
+```{R}
+##joining code
+animereviews <- sample_userlist %>% 
+  left_join(animetidy, by=c("anime_id"="MAL_ID")) %>% 
+  filter(Rating != "Rx - Hentai") %>% 
+  filter(rating.x != 0)
+glimpse(animereviews)
+```
+
+The sample_userlist data set originally contained 100,000 rows and 5 columns, while the animetidy set contained 878,100 rows and 19 columns. The user data included 7,916 unique anime titles while the tidy anime set contained 17,562 unique names. There are 9,646 titles unique to "animetidy" that aren't in the "sample_userlist" set while the "sample_userlist" set has no (0) unique titles from "animetidy". The two data sets share 7,916 anime titles in total between them.
+
+```{R}
+##other code
+glimpse(sample_userlist)
+glimpse(animetidy)
+sample_userlist %>% distinct(anime_id)
+animetidy %>% distinct(MAL_ID)
+sample_userlist %>% 
+  anti_join(animetidy, by=c("anime_id"="MAL_ID")) %>% 
+  distinct(anime_id)
+animetidy %>% 
+  anti_join(sample_userlist, by=c("MAL_ID"="anime_id")) %>% 
+  distinct(MAL_ID)
+sample_userlist %>% 
+  semi_join(animetidy, by=c("anime_id"="MAL_ID")) %>% 
+  distinct(anime_id)
+```
+
+After joining, I noticed some variables had very similar names (specifically "rating.x" and "rating.y"), so to avoid confusion, "rating.x" was renamed to "user_score" to mark the score the user themselves assigned towards that specific anime. Likewise, "rating.y" was renamed to "score_num" to indicate the discrete score (1-10) each global score count ("global_nscore") belongs to.
+
+```{R}
+##renaming certain variables so they make more sense within joined set
+animereviews <- animereviews %>% 
+  rename(user_score = rating.x, 
+         score_num = rating.y)
+```
+
+
+####  Wrangling
+
+```{R}
+##below I generate total user counts for each categorical variable
+##counts by maturity rating
+animereviews %>% group_by(Rating) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+
+##counts by user watching status
+animereviews %>% group_by(watching_status) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users) %>% 
+  mutate(watching_status = recode(watching_status, 
+                                  `1` = "Currently Watching", 
+                                  `2` = "Completed", 
+                                  `3` = "On-Hold", 
+                                  `4` = "Dropped", 
+                                  `6` = "Plan to Watch"))
+
+##counts by genre(s)
+animereviews %>% group_by(Genres) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+
+##counts by media type
+animereviews %>% group_by(Type) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+
+##counts by premiere season
+animereviews %>% group_by(Premiered) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+
+##counts by anime studio(s)
+animereviews %>% group_by(Studios) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+
+##counts by source material
+animereviews %>% group_by(Source) %>% 
+  summarize(n_users = n_distinct(user_id), 
+            percent_users = n_users/297, 
+            n_titles = n_distinct(Name), 
+            percent_titles = n_titles/5221) %>% 
+  arrange(-n_users)
+```
+
+```{R}
+##z-score function
+zscore <- function(x, mean, sd){(x-mean)/sd}
+
+##generating z-scores for each user rating by anime title, as well as % of users that rated that title lower than the user did
+animereviews %>% select(user_id, Name, user_score, global_meanscore) %>% 
+  group_by(Name) %>% 
+  mutate(mean_userscore = mean(user_score), 
+         sd_userscore = sd(user_score), 
+         user_zscore = zscore(user_score, mean_userscore, sd_userscore), 
+         user_pnorm = pnorm(user_zscore))
+```
+
+```{R}
+##summary stats for the top 10 most popular anime titles, arranged by descending popularity (determined by n_users or amount of unique users in the sample that added the title to their list)
+animetop10 <- animereviews %>% group_by(Name) %>% 
+  summarize(mean_userscore = mean(user_score), 
+            sd_userscore = sd(user_score), 
+            max_userscore = max(user_score), 
+            min_userscore = min(user_score), 
+            n_users = n_distinct(user_id)) %>% 
+  arrange(-n_users) %>% 
+  slice(1:10)
+animetop10 %>% kbl() %>% kable_material(c("striped", "hover"))
+```
+
+```{R}
+##comparing mean score and popularity of anime titles by studio(s)
+animereviews %>% group_by(Studios, Name) %>% 
+  summarize(mean_userscore = mean(user_score), 
+            n_users = n_distinct(user_id)) %>% 
+  arrange(-n_users)
+```
+
+```{R}
+##testing to see if an anime's average score changes by watching status
+animereviews %>% group_by(Name, watching_status) %>% 
+  summarize(mean_userscore = mean(user_score), 
+            n_users = n_distinct(user_id)) %>% 
+  mutate(watching_status = recode(watching_status, 
+                                  `1` = "Currently Watching", 
+                                  `2` = "Completed", 
+                                  `3` = "On-Hold", 
+                                  `4` = "Dropped", 
+                                  `6` = "Plan to Watch"))
+
+##which anime has the largest amount of episodes?
+animereviews$Episodes <- as.numeric(as.character(animereviews$Episodes))
+animereviews %>% select(Name, Episodes) %>% 
+  slice_max(Episodes) %>% 
+  distinct(Name, Episodes)
+
+##which anime titles begin with a number?
+animereviews %>% distinct(Name) %>% 
+  filter(str_detect(Name, "^[0-9]"))
+
+##what is the longest anime title?
+animereviews %>% filter(Type == "TV") %>% distinct(Name) %>% slice_max(str_length(Name))
+
+##which anime has the highest average score?
+animereviews$Ranked <- as.numeric(as.character(animereviews$Ranked))
+animereviews$Popularity <- as.numeric(as.character(animereviews$Popularity))
+animereviews %>% select(Name, Ranked, global_meanscore) %>% 
+  slice_min(Ranked) %>% 
+  distinct(Name, Ranked, global_meanscore)
+```
+
+When picking these data sets, I knew I definitely wanted to use functions like mean and pnorm to figure out how each individual user score compared to others for every anime title. However, because I was only able to use the first 100,000 rows of the original users data set, the statistics I've been able to demonstrate here aren't truly reflective of the entire user population - I was only able to compare each user to the other 297 unique users who happened to be in the first 100k rows. Despite this, I was still able to get some really interesting findings from the joined data set.
+
+For one, it was interesting to see that over half (58.4%) of the titles included were rated PG-13. Most of the top most popular anime (8/10 of the top 10 alone) are also those dealing with the Action genre, while the most popular premiere season among users was Fall 2006. The most popular anime studio, Madhouse, also produced the most popular anime among users, Death Note. The anime studio with the most anime titles is Toei Animation, which has produced some well-known titles like One Piece, Dragon Ball Z, and Sailor Moon. Despite the international success of these titles, none of their titles appeared within the top 10 most popular anime. Most anime titles were sourced from manga (38.2%), or the Japanese equivalent to comic books. Doraemon (1979) also came out as the anime with the most episodes, with a total of 1,787. The longest title for an anime TV series is "Maou Gakuin no Futekigousha: Shijou Saikyou no Maou no Shiso, Tensei shite Shison-tachi no Gakkou e Kayou 2nd Season", otherwise known in English as "The Misfit of Demon King Academy: History's Strongest Demon King Reincarnates and Goes to School with His Descendants 2nd Season". Lastly, although Death Note was the most popular anime among the list, Fullmetal Alchemist: Brotherhood ended up being the highset-scoring title, on average.
+
+
+#### Visualizing
+
+```{R}
+library(ggplot2)
+##average score for the top 10 most popular anime, ordered by popularity
+##most popular at top, 10th most popular at bottom
+ggplot(animetop10, aes(x=reorder(Name, +n_users), y=mean_userscore, fill=Name)) + 
+  geom_bar(stat = "summary", show.legend = FALSE) + 
+  labs(title = "Top 10 Most Popular Anime: Average Score", 
+       x = "Name of Anime", y = "Average Score") + 
+  coord_flip() + 
+  geom_errorbar(aes(x=Name, 
+                    ymin=mean_userscore-sd_userscore, 
+                    ymax=mean_userscore+sd_userscore), 
+                width = 0.4) + 
+  scale_y_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10)) + 
+  theme_minimal()
+```
+
+For this graph, I wanted to visually compare the average user score across the top 10 most popular anime in the joined data set. The titles are in order of most popular (top) to 10th most popular (bottom), and the graph was flipped sideways to allow easier readability for the titles. Error bars for the average scores were added to visualize the spread of scores per title. I decided to restrict this graph to the top 10 most popular titles instead of showcasing every unique title in the data set because otherwise, the graph wouldn't have been readable at all (there are 5,221 unique titles in total). What's most interesting from this graph is that Sword Art Online seems to have the largest spread of scores based on its large error bar. It's also interesting to see that despite their large popularity, the average scores for each title vary quite a bit as the range fell between 7.42 (Sword Art Online) and 9.17 (Fullmetal Alchemist: Brotherhood). If we were testing for significant difference between these scores, we could predict that no significant differences in average score between titles would be found since all the error bars overlap with each other.
+
+```{R}
+#relationship between a title's score rank and popularity
+animepop <- animereviews %>% 
+  group_by(Name) %>% 
+  distinct(Name, Popularity, Ranked, Rating)
+ggplot(animepop, aes(x= Ranked, y=Popularity)) + 
+  geom_point(aes(color=Rating)) + 
+  geom_smooth(method="lm") + 
+  labs(title = "Relationship Between Score Rank and Popularity", 
+       x = "Rank by Average Score", 
+       y = "Rank by Popularity") + 
+  scale_y_continuous(breaks = c(3000,6000,9000,12000,15000)) + 
+  scale_x_continuous(breaks = c(3000,6000,9000,12000,15000)) + 
+  theme_classic() + 
+  theme(legend.position="bottom")
+```
+
+For this scatter plot, I wanted to see if a title's global score rank (or position based on the global mean user score) correlated strongly with the title's popularity rank (or position based on the total number of users who have that title on their list). The points were filled by the title's maturity rating to see if the relationship changed between each category. As can be seen in the graph, it turns out there is a moderately positive relationship between score rank and popularity rank. What's personally surprising here is that I predicted the relationship would be a bit stronger, but as it turns out, popularity doesn't seem to be an extremely strong predictor of quality/score. Based on the maturity ratings, it's interesting to see titles rated G stand out somewhat from the overall pattern. These titles seem to have the strongest relationship between both ranks, while titles rated PG-13 seem to have the weakest relationship. However, this may just be due to the amount of titles which fall into each category. After all, over half of titles are rated PG-13 while only 11% of titles are rated G.
+
+```{R}
+##summary statistics of user scores according to a title's maturity rating
+ggplot(animereviews, aes(x=Rating, y=user_score, fill=Rating)) + 
+  geom_boxplot(show.legend = FALSE) + 
+  coord_flip() + 
+  labs(title = "Summary Statistics of User Scores by Rating", 
+       y = "User-Assigned Score", 
+       x = "Maturity Rating") + 
+  scale_y_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10)) + 
+  theme_classic()
+```
+
+For the final plot, a separate box plot of user-assigned scores was created for each maturity rating category. Excluding outliers, it was interesting to see how titles rated PG-13 and R - 17+ had the shortest range of scores. These two categories also had the largest medians and the most amount of outliers, which along with the small IQR range, may indicate a large variability overall in scores. Shows rated G and PG seem to have the most variability in the middle 50% of scores.
+
+#### Concluding Remarks
+
+I had a lot of fun going through these two data sets and practicing the skills I've learned through out class, it made me connect more with an old passion of mine. I'm already excited for the next project to come if I'll have the same experience as this!
+
+
+
+
